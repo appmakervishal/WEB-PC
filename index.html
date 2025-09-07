@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Web PC (OS.js - Full UI + Settings)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/os-js/OS.js-v3/dist/osjs.css">
+  <style>
+    #dropzone {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0,0,0,0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 24px;
+      font-family: sans-serif;
+      z-index: 99999;
+    }
+  </style>
+</head>
+<body>
+  <div id="dropzone">📂 Drop files to upload</div>
+
+  <script src="https://cdn.jsdelivr.net/gh/os-js/OS.js-v3/dist/osjs.js"></script>
+  <script>
+    class LocalStorageAdapter {
+      constructor() {
+        this.key = 'osjs-vfs';
+        this.data = JSON.parse(localStorage.getItem(this.key) || '{}');
+      }
+      _save() { localStorage.setItem(this.key, JSON.stringify(this.data)); }
+      readdir(path = '/') {
+        return Promise.resolve(
+          Object.keys(this.data).filter(p => p.startsWith(path)).map(p => ({
+            filename: p.replace(path, ''),
+            path: p,
+            isDirectory: false
+          }))
+        );
+      }
+      readfile(path) { return Promise.resolve(this.data[path] || ''); }
+      writefile(path, data) { this.data[path] = data; this._save(); return Promise.resolve(true); }
+      unlink(path) { delete this.data[path]; this._save(); return Promise.resolve(true); }
+    }
+
+    function downloadFile(filename, content) {
+      const blob = new Blob([content], {type: "application/octet-stream"});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function setupDragAndDrop(adapter) {
+      const dropzone = document.getElementById('dropzone');
+      window.addEventListener('dragover', e => { e.preventDefault(); dropzone.style.display = 'flex'; });
+      window.addEventListener('dragleave', e => { if (e.relatedTarget === null) dropzone.style.display = 'none'; });
+      window.addEventListener('drop', async e => {
+        e.preventDefault();
+        dropzone.style.display = 'none';
+        for (const file of e.dataTransfer.files) {
+          const text = await file.text();
+          await adapter.writefile('/' + file.name, text);
+        }
+        alert('Files uploaded! Refresh FileManager to see them.');
+      });
+      window.downloadFromVFS = (filename) => {
+        if (adapter.data['/' + filename]) downloadFile(filename, adapter.data['/' + filename]);
+        else alert('File not found!');
+      };
+    }
+
+    function createSettingsApp(core) {
+      core.make('osjs/packages').register('Settings', (core, args, options, win) => {
+        if (!win) {
+          win = core.make('osjs/window', {
+            title: 'Desktop Settings',
+            dimension: {width: 300, height: 250}
+          }).render(($content) => {
+            const settings = JSON.parse(localStorage.getItem('osjs-desktop-settings') || '{}');
+            const wallpaper = settings.wallpaper || 'https://images.unsplash.com/photo-1503264116251-35a269479413?w=1920';
+            const theme = settings.theme || 'default';
+
+            $content.innerHTML = `
+              <div style="padding:10px;font-family:sans-serif">
+                <label>Wallpaper URL:</label><br>
+                <input id="wallpaper-url" style="width:100%" value="${wallpaper}"><br><br>
+                <label>Theme:</label><br>
+                <select id="theme-select">
+                  <option value="default" ${theme==='default'?'selected':''}>Default</option>
+                  <option value="dark" ${theme==='dark'?'selected':''}>Dark</option>
+                  <option value="light" ${theme==='light'?'selected':''}>Light</option>
+                </select><br><br>
+                <button id="save-settings">Save</button>
+              </div>
+            `;
+
+            $content.querySelector('#save-settings').addEventListener('click', () => {
+              const newWallpaper = $content.querySelector('#wallpaper-url').value;
+              const newTheme = $content.querySelector('#theme-select').value;
+              localStorage.setItem('osjs-desktop-settings', JSON.stringify({wallpaper: newWallpaper, theme: newTheme}));
+              location.reload();
+            });
+          });
+        }
+        return win;
+      });
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const adapter = new LocalStorageAdapter();
+      setupDragAndDrop(adapter);
+
+      const settings = JSON.parse(localStorage.getItem('osjs-desktop-settings') || '{}');
+      const wallpaper = settings.wallpaper || 'https://images.unsplash.com/photo-1503264116251-35a269479413?w=1920';
+      const theme = settings.theme || 'default';
+
+      OSjs.boot({
+        standalone: true,
+        settings: {
+          desktop: {
+            background: { picture: wallpaper, style: 'cover', color: '#000' },
+            theme
+          }
+        },
+        vfs: { mountpoints: [{ name: 'home', adapter }] },
+        packages: [
+          { name: 'FileManager' }, { name: 'TextEditor' }, { name: 'Browser' },
+          { name: 'Terminal' }, { name: 'Calculator' }, { name: 'Draw' },
+          { name: 'Preview' }, { name: 'AboutOSjs' }
+        ]
+      }).then(core => {
+        createSettingsApp(core);
+      });
+
+      console.log("✅ Web PC ready! Use downloadFromVFS('filename.txt') in console to download files.");
+    });
+  </script>
+</body>
+</html>
